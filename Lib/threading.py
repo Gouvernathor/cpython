@@ -894,10 +894,10 @@ class Thread:
                 except AttributeError:
                     pass
 
+        if args or kwargs:
+            target = functools.partial(target, *args, **kwargs)
         self._target = target
         self._name = name
-        self._args = args
-        self._kwargs = kwargs
         if daemon is not None:
             self._daemonic = daemon
         else:
@@ -983,11 +983,11 @@ class Thread:
         """
         try:
             if self._target is not None:
-                self._target(*self._args, **self._kwargs)
+                self._target()
         finally:
             # Avoid a refcycle if the thread is running a function with
             # an argument that has a member that points to the thread.
-            del self._target, self._args, self._kwargs
+            del self._target
 
     def _bootstrap(self):
         # Wrapper around the real bootstrap code that ignores
