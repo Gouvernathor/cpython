@@ -729,7 +729,7 @@ float_floor_div(PyObject *v, PyObject *w)
         return NULL;
     }
     _float_div_mod(vx, wx, &floordiv, &mod);
-    return PyFloat_FromDouble(floordiv);
+    return PyLong_FromDouble(floordiv);
 }
 
 /* determine whether x is an odd integer or not;  assumes that
