@@ -352,6 +352,174 @@ try:
 except ImportError:
     _tuplegetter = lambda index, doc: property(_itemgetter(index), doc=doc)
 
+class NamedTupleMeta(type):
+    def __new__(mcls, typename, bases, namespace, /, *, rename=False, module=None) -> type:
+        if _prohibited.intersection(namespace):
+            raise AttributeError(f"Cannot overwrite NamedTuple attribute {next(iter(_prohibited.intersection(namespace)))}")
+
+        annos = namespace.get("__annotations__", {})
+        field_names = list(annos)
+
+        # default_names = []
+        field_defaults = {}
+        for field_name in field_names:
+            if field_name in namespace:
+                # default_names.append(field_name)
+                field_defaults[field_name] = namespace[field_name]
+            # elif default_names:
+            elif field_defaults:
+                # *dnames, last = default_names
+                *dnames, last = field_defaults
+                if dnames:
+                    post = "s " + ", ".join(map(repr, dnames)) + repr(last)
+                else:
+                    post = " " + repr(last)
+                raise ValueError(f"Non-default namedtuple field {field_name!r} cannot follow default field{post}")
+
+        typename = _sys.intern(typename)
+
+        if rename:
+            seen = set()
+            for index, field_name in enumerate(field_names):
+                if (not field_name.isidentifier()
+                    or _iskeyword(field_name)
+                    or field_name.startswith('_')
+                    or field_name in seen):
+                    field_names[index] = f'_{index}'
+                seen.add(field_name)
+        else:
+            seen = set()
+            for field_name in field_names:
+                if not field_name.isidentifier():
+                    raise ValueError(f"Field names must be valid identifiers: {field_name!r}")
+                if _iskeyword(field_name):
+                    raise ValueError(f"Field name cannot be a keyword: {field_name!r}")
+                if field_name.startswith("_"):
+                    raise ValueError(f"Field names cannot start with an underscore: {field_name!r}")
+                if field_name in seen:
+                    raise ValueError(f"Encountered duplicate field name: {field_name!r}")
+                seen.add(field_name)
+
+        field_names = tuple(map(_sys.intern, field_names))
+        num_fields = len(field_names)
+        arg_list = ", ".join(field_names)
+        if num_fields == 1:
+            arg_list += ','
+        tuple_new = tuple.__new__
+
+        __new__ = eval(
+            f"lambda _cls, {arg_list}: _tuple_new(_cls, ({arg_list}))",
+            dict(
+                _tuple_new = tuple_new,
+                __builtins__ = {},
+                __name__ = f"_namedtuple_{typename}",
+            )
+        )
+        __new__.__name__ = "__new__"
+        __new__.__doc__ = f"Create new instance of {typename}({arg_list})"
+        if field_defaults is not None:
+            __new__.__defaults__ = tuple(field_defaults)
+
+        # will be a classmethod
+        def _make(cls, iterable):
+            result = tuple_new(cls, iterable)
+            if len(result) != num_fields:
+                raise TypeError(f"Expected {num_fields} arguments, got {len(result)}")
+            return result
+
+        _make.__doc__ = f"Make a new {typename} object from a sequence or iterable"
+
+        def _replace(self, /, **kwds):
+            result = self._make(map(kwds.pop, field_names, self))
+            if kwds:
+                raise ValueError(f"Got unexpected field names: {list(kwds)!r}")
+            return result
+
+        _replace.__doc__ = f"Return a new {typename} object replacing specific fields with new values"
+
+        repr_fmt = "(" + ", ".join(f"{fname}=%r" for fname in field_names) + ")"
+
+        def __repr__(self):
+            "Return a nicely formatted representation string."
+            return self.__class__.__name__ + repr_fmt%self
+
+        def _asdict(self):
+            "Return a new dict which maps field names to their values."
+            return dict(zip(field_names, self))
+
+        def __getnewargs__(self):
+            "Return self as a plain tuple (used by copy and pickle)."
+            return tuple(self)
+
+        # edit function medatata to help with introspection and debugging
+        for method in (
+            __new__,
+            _make,
+            _replace,
+            __repr__,
+            _asdict,
+            __getnewargs__,
+        ):
+            method.__qualname__ = f"{typename}.{method.__name__}"
+
+        # build the class namespace dictionary
+        # and the type object using super
+        class_namespace = dict(
+            __doc__ = f"{typename}({arg_list})",
+            __slots__ = (),
+            _fields = field_names,
+            _field_defaults = field_defaults,
+            __new__ = __new__,
+            _make = classmethod(_make),
+            _replace = _replace,
+            __repr__ = __repr__,
+            _asdict = _asdict,
+            __getnewargs__ = __getnewargs__,
+            __match_args__ = field_names,
+        )
+        # creating the named accessors
+        override_namespace: dict = dict(
+            __name__ = typename,
+            __annotations__ = annos,
+        )
+        for index, name in enumerate(field_names):
+            doc = _sys.intern(f"Alias for field number {index}")
+            override_namespace[name] = _tuplegetter(index, doc)
+
+        if module is None:
+            module = namespace.get("__module__", None)
+            if module is None:
+                try:
+                    module = _sys._getframemodulename(1) or "__main__" # type: ignore
+                except AttributeError:
+                    try:
+                        module = _sys._getframe(1).f_globals.get("__name__", "__main__")
+                    except (AttributeError, ValueError):
+                        pass
+        if module is not None:
+            override_namespace["__module__"] = module
+
+        cls = super().__new__(mcls, typename, tuple(bases)+(tuple,), class_namespace|namespace|override_namespace)
+
+        if module is not None:
+            cls.__module__ = module
+
+        # things taken from typing.NamedTupleMeta
+
+        # not sure what this one is for
+        # if Generic in bases:
+        #     cls.__class_getitem__ = classmethod(_generic_class_getitem)
+
+        # then there's the protection of the namespace :
+        # - the _prohibited was tested at the start of the function
+        # - the _special and the field names are taken care of in override_namespace
+
+        # not sure either
+        # if Generic in bases:
+        #     cls.__init_subclass__()
+
+        return cls
+
 def namedtuple(typename, field_names, *, rename=False, defaults=None, module=None):
     """Returns a new subclass of tuple with named fields.
 
