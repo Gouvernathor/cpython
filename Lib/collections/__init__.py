@@ -352,6 +352,11 @@ try:
 except ImportError:
     _tuplegetter = lambda index, doc: property(_itemgetter(index), doc=doc)
 
+_prohibited = frozenset({
+    '__new__', '__init__', '__slots__', '__getnewargs__', '_fields',
+    '_field_defaults', '_make', '_replace', '_asdict', '_source',
+})
+
 class NamedTupleMeta(type):
     def __new__(mcls, typename, bases, namespace, /, *, rename=False, module=None) -> "NamedTupleMeta":
         if _prohibited.intersection(namespace):
@@ -477,11 +482,12 @@ class NamedTupleMeta(type):
             __getnewargs__ = __getnewargs__,
             __match_args__ = field_names,
         )
-        # creating the named accessors
+
         override_namespace: dict = dict(
             __name__ = typename,
             __annotations__ = annos,
         )
+        # creating the named accessors
         for index, name in enumerate(field_names):
             doc = _sys.intern(f"Alias for field number {index}")
             override_namespace[name] = _tuplegetter(index, doc)
@@ -499,8 +505,12 @@ class NamedTupleMeta(type):
         if module is not None:
             override_namespace["__module__"] = module
 
-        # FIXME: append tuple only of not already present in bases
-        cls = super().__new__(mcls, typename, tuple(bases)+(tuple,), class_namespace|namespace|override_namespace)
+        # TODO: this is entirely new ; maybe the last place is not the best place to put the tuple class
+        bases = tuple(bases)
+        if tuple not in bases:
+            bases += (tuple,)
+
+        cls = super().__new__(mcls, typename, bases, class_namespace|namespace|override_namespace)
 
         if module is not None:
             cls.__module__ = module
@@ -550,11 +560,11 @@ def namedtuple(typename, field_names, *, rename=False, defaults=None, module=Non
     __annotations__ = {str(fname): object for fname in field_names}
     if defaults is not None:
         defaults = tuple(defaults)
-        if len(defaults) > len(field_names):
+        if len(defaults) > len(__annotations__):
             raise TypeError("Got more defaults than field names")
         # field_defaults
         namespace = dict(
-            reversed(list(zip(reversed(field_names), reversed(defaults)))),
+            reversed(list(zip(reversed(__annotations__), reversed(defaults)))),
             __annotations__=__annotations__,
         )
     else:
