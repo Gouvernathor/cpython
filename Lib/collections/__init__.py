@@ -362,7 +362,7 @@ class NamedTupleMeta(type):
         if _prohibited.intersection(namespace):
             raise AttributeError(f"Cannot overwrite NamedTuple attribute {next(iter(_prohibited.intersection(namespace)))}")
 
-        annos = namespace.get("__annotations__", {})
+        annos: dict = namespace.get("__annotations__", {})
         field_names = list(annos)
 
         # default_names = []
@@ -376,7 +376,7 @@ class NamedTupleMeta(type):
                 # *dnames, last = default_names
                 *dnames, last = field_defaults
                 if dnames:
-                    post = "s " + ", ".join(map(repr, dnames)) + repr(last)
+                    post = "s " + ", ".join(map(repr, dnames)) + " and " + repr(last)
                 else:
                     post = " " + repr(last)
                 raise ValueError(f"Non-default namedtuple field {field_name!r} cannot follow default field{post}")
@@ -483,7 +483,7 @@ class NamedTupleMeta(type):
             __match_args__ = field_names,
         )
 
-        override_namespace: dict = dict(
+        override_namespace = dict(
             __name__ = typename,
             __annotations__ = annos,
         )
